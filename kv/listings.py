@@ -2,7 +2,7 @@
 
 import re
 from bs4 import BeautifulSoup
-from .browser import with_browser
+from browser import with_browser
 
 def normalize_spaces(s: str) -> str:
     return re.sub(r"\s+", " ", s).strip()
