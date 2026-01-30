@@ -1,7 +1,8 @@
 # main.py
-from search import get_listing_urls
-from listings import crawl_kv_listing
-from db import init_db, save_listing
+
+from .search import get_listing_urls
+from .listings import crawl_kv_listing
+from .db import init_db, save_listing
 
 def main():
     init_db()
