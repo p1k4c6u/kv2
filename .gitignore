@@ -5,7 +5,7 @@ __pycache__/
 *.pyd
 
 # Playwright / browser profile
-kv/kv_profile/
+kv_profile/
 
 # Environment variables
 .env
@@ -14,5 +14,5 @@ kv/kv_profile/
 .DS_Store
 Thumbs.db
 
-# Logs (if you add any later)
+# Logs
 *.log

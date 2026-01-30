@@ -2,7 +2,7 @@
 import re
 import time
 from urllib.parse import urljoin
-from browser import with_browser
+from .browser import with_browser
 
 BASE = "https://www.kv.ee"
 

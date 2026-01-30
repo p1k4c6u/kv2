@@ -5,7 +5,13 @@ import json
 import hashlib
 import psycopg
 
-DB_URL = os.environ["DATABASE_URL"]
+DB_URL = os.environ.get("DATABASE_URL")
+if not DB_URL:
+    raise RuntimeError(
+        "DATABASE_URL environment variable is not set. "
+        "Please set it to your PostgreSQL connection string, e.g.: "
+        "postgresql://user:password@localhost:5432/dbname"
+    )
 
 CREATE_SQL = """
 CREATE TABLE IF NOT EXISTS kv_listings (
@@ -90,8 +96,6 @@ WHERE NOT EXISTS (
   SELECT 1 FROM kv_listing_snapshots
   WHERE listing_id = %(listing_id)s
     AND content_hash = %(content_hash)s
-  ORDER BY fetched_at DESC
-  LIMIT 1
 );
 """
 
