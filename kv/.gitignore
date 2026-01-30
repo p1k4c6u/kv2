@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Playwright / browser profile
+kv/kv_profile/
+
+# Environment variables
+.env
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Logs (if you add any later)
+*.log
