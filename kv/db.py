@@ -13,6 +13,10 @@ if not DB_URL:
         "postgresql://user:password@localhost:5432/dbname"
     )
 
+# Railway uses postgres:// but psycopg3 requires postgresql://
+if DB_URL.startswith("postgres://"):
+    DB_URL = DB_URL.replace("postgres://", "postgresql://", 1)
+
 CREATE_SQL = """
 CREATE TABLE IF NOT EXISTS kv_listings (
   listing_id TEXT PRIMARY KEY,
