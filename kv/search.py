@@ -59,6 +59,9 @@ def extract_listing_urls(page) -> set[str]:
         else:
             continue
 
+        if "/object/images/" in u:
+            continue
+
         if "/object/" in u or re.search(r"-\d+\.html$", u):
             urls.add(u)
 
