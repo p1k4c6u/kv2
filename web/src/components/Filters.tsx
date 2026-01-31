@@ -1,5 +1,5 @@
 // components/Filters.tsx
-import { ListingsParams } from '../api';
+import type { ListingsParams } from '../api';
 
 interface FiltersProps {
   filters: ListingsParams;

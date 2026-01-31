@@ -5,10 +5,8 @@ import {
   getStats, 
   triggerAnalysis, 
   getAnalysisStatus,
-  ListingSummary, 
-  Stats, 
-  ListingsParams 
 } from '../api';
+import type { ListingSummary, Stats, ListingsParams } from '../api';
 import { ListingCard } from '../components/ListingCard';
 import { Filters } from '../components/Filters';
 import { StatsCard } from '../components/StatsCard';

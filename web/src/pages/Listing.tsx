@@ -1,7 +1,8 @@
 // pages/Listing.tsx
 import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { getListing, ListingDetail } from '../api';
+import { getListing } from '../api';
+import type { ListingDetail } from '../api';
 import { ScoreBar } from '../components/ScoreBar';
 
 export function ListingPage() {

@@ -1,5 +1,5 @@
 // components/StatsCard.tsx
-import { Stats } from '../api';
+import type { Stats } from '../api';
 
 interface StatsCardProps {
   stats: Stats | null;

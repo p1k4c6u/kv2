@@ -1,6 +1,6 @@
 // components/ListingCard.tsx
 import { Link } from 'react-router-dom';
-import { ListingSummary } from '../api';
+import type { ListingSummary } from '../api';
 import { ScoreBar } from './ScoreBar';
 
 interface ListingCardProps {
