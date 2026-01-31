@@ -67,7 +67,7 @@ def extract_listing_urls(page) -> set[str]:
 
     return urls
 
-def get_listing_urls(city: str, max_pages: int = 4) -> list[str]:
+def get_listing_urls(city: str, max_pages: int = 50) -> list[str]:
     city = city.lower().strip()
     search_base = build_search_url(city)
     all_urls = set()
