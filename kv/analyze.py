@@ -1,7 +1,7 @@
 # analyze.py
 
 """
-LLM-powered listing analysis using Claude API.
+LLM-powered listing analysis using OpenRouter API (supports Claude and other models).
 Fetches listings from the database, scores them using a fixed rubric,
 and outputs ranked results.
 """
@@ -11,13 +11,16 @@ import json
 import time
 import re
 import psycopg
-from anthropic import Anthropic
+from openai import OpenAI
 
 from rubric import SCORING_RUBRIC, format_rubric_for_prompt, get_total_weight
 
-# API Configuration
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
-MODEL = "claude-sonnet-4-20250514"
+# API Configuration - OpenRouter
+OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+MODEL = os.environ.get(
+    "OPENROUTER_MODEL", "anthropic/claude-sonnet-4"
+)  # Can be changed via env
 RATE_LIMIT_DELAY = 1.0  # seconds between API calls
 
 # Database
@@ -133,19 +136,21 @@ def parse_llm_response(response_text: str) -> dict | None:
     return None
 
 
-def analyze_listing(client: Anthropic, listing: dict) -> dict:
-    """Analyze a single listing using Claude API."""
+def analyze_listing(client: OpenAI, listing: dict) -> dict:
+    """Analyze a single listing using OpenRouter API."""
     prompt = build_prompt(listing)
 
     try:
-        response = client.messages.create(
+        response = client.chat.completions.create(
             model=MODEL,
             max_tokens=500,
-            messages=[{"role": "user", "content": prompt}],
-            system=SYSTEM_PROMPT,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
         )
 
-        response_text = response.content[0].text
+        response_text = response.choices[0].message.content
         parsed = parse_llm_response(response_text)
 
         if parsed and "score" in parsed:
@@ -187,17 +192,20 @@ def analyze_listing(client: Anthropic, listing: dict) -> dict:
 
 def analyze_all(listings: list[dict]) -> list[dict]:
     """Analyze all listings with rate limiting."""
-    if not ANTHROPIC_API_KEY:
+    if not OPENROUTER_API_KEY:
         raise RuntimeError(
-            "ANTHROPIC_API_KEY environment variable is not set. "
-            "Please set it to your Anthropic API key."
+            "OPENROUTER_API_KEY environment variable is not set. "
+            "Please set it to your OpenRouter API key."
         )
 
-    client = Anthropic(api_key=ANTHROPIC_API_KEY)
+    client = OpenAI(
+        api_key=OPENROUTER_API_KEY,
+        base_url=OPENROUTER_BASE_URL,
+    )
     results = []
     total = len(listings)
 
-    print(f"Analyzing {total} listings with Claude...")
+    print(f"Analyzing {total} listings with {MODEL}...")
 
     for i, listing in enumerate(listings, 1):
         title = listing.get("title", "Unknown")[:50]
