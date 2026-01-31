@@ -14,6 +14,7 @@ import psycopg
 from openai import OpenAI
 
 from rubric import SCORING_RUBRIC, format_rubric_for_prompt, get_total_weight
+from db import save_analysis, get_analyzed_listing_ids
 
 # API Configuration - OpenRouter
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
@@ -190,13 +191,35 @@ def analyze_listing(client: OpenAI, listing: dict) -> dict:
         }
 
 
-def analyze_all(listings: list[dict]) -> list[dict]:
-    """Analyze all listings with rate limiting."""
+def analyze_all(
+    listings: list[dict], save_to_db: bool = True, skip_analyzed: bool = True
+) -> list[dict]:
+    """
+    Analyze all listings with rate limiting.
+
+    Args:
+        listings: List of listing dicts to analyze
+        save_to_db: Whether to save results to database
+        skip_analyzed: Whether to skip already analyzed listings
+    """
     if not OPENROUTER_API_KEY:
         raise RuntimeError(
             "OPENROUTER_API_KEY environment variable is not set. "
             "Please set it to your OpenRouter API key."
         )
+
+    # Filter out already analyzed listings if requested
+    if skip_analyzed:
+        analyzed_ids = get_analyzed_listing_ids()
+        original_count = len(listings)
+        listings = [l for l in listings if l["listing_id"] not in analyzed_ids]
+        skipped = original_count - len(listings)
+        if skipped > 0:
+            print(f"Skipping {skipped} already analyzed listings")
+
+    if not listings:
+        print("No new listings to analyze.")
+        return []
 
     client = OpenAI(
         api_key=OPENROUTER_API_KEY,
@@ -218,6 +241,16 @@ def analyze_all(listings: list[dict]) -> list[dict]:
             print(f"    Error: {result['error'][:100]}")
         else:
             print(f"    Score: {result['score']}/100")
+
+            # Save to database
+            if save_to_db and not result.get("error"):
+                save_analysis(
+                    listing_id=result["listing_id"],
+                    score=result["score"],
+                    breakdown=result.get("breakdown", {}),
+                    summary=result.get("summary", ""),
+                    model=MODEL,
+                )
 
         # Rate limiting (skip delay on last item)
         if i < total:

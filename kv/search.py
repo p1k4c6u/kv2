@@ -8,7 +8,7 @@ BASE = "https://www.kv.ee"
 
 CITY_TO_FILTERS = {
     "tallinn": {"county": 1, "parish": 421},
-    "tartu":   {"county": 7, "parish": 784},
+    "tartu": {"county": 7, "parish": 784},
 }
 
 COUNTY_TO_ID = {
@@ -41,13 +41,21 @@ def build_search_url(area: str) -> str:
             f"act=search.simple&deal_type=1&county={county_id}"
         )
 
-    raise ValueError(f"Unknown area '{area}'. Add it to CITY_TO_FILTERS or COUNTY_TO_ID.")
+    raise ValueError(
+        f"Unknown area '{area}'. Add it to CITY_TO_FILTERS or COUNTY_TO_ID."
+    )
 
 
 def extract_listing_urls(page) -> set[str]:
+    """
+    Extract listing URLs from a search results page.
+
+    Handles both URL formats:
+    - Old: /object/3825677
+    - New: /something-something-3825677.html
+    """
     hrefs = page.eval_on_selector_all(
-        "a[href]",
-        "els => els.map(e => e.getAttribute('href'))"
+        "a[href]", "els => els.map(e => e.getAttribute('href'))"
     )
 
     urls = set()
@@ -59,13 +67,19 @@ def extract_listing_urls(page) -> set[str]:
         else:
             continue
 
+        # Skip image gallery links
         if "/object/images/" in u:
             continue
 
-        if "/object/" in u or re.search(r"-\d+\.html$", u):
+        # Match new format: ends with -NUMBER.html (e.g., -3825677.html)
+        if re.search(r"-\d+\.html$", u):
+            urls.add(u)
+        # Match old format: /object/NUMBER
+        elif "/object/" in u:
             urls.add(u)
 
     return urls
+
 
 def get_listing_urls(city: str, max_pages: int = 50) -> list[str]:
     city = city.lower().strip()
@@ -84,7 +98,7 @@ def get_listing_urls(city: str, max_pages: int = 50) -> list[str]:
             batch = extract_listing_urls(page)
             new = batch - all_urls
 
-            print(f"page {page_no}: +{len(new)} (total {len(all_urls)+len(new)})")
+            print(f"page {page_no}: +{len(new)} (total {len(all_urls) + len(new)})")
 
             if not new:
                 break
