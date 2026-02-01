@@ -41,17 +41,23 @@ def run_scrape(area: str):
 
         urls = get_listing_urls(area, owner_only=True)
 
+        saved = 0
+        errors = []
         for url in urls:
             try:
                 data = crawl_kv_listing(url)
                 save_listing(data)
+                saved += 1
             except Exception as e:
+                errors.append({"url": url, "error": str(e)})
                 print(f"Error scraping {url}: {e}")
                 continue
 
         _last_scrape_result = {
             "status": "complete",
-            "listings_found": len(urls),
+            "urls_found": len(urls),
+            "saved": saved,
+            "errors": errors[:10],  # keep last 10 errors max
         }
     except Exception as e:
         _last_scrape_result = {
