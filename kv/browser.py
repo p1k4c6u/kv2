@@ -122,85 +122,22 @@ def _get_2captcha_key() -> str | None:
     return os.environ.get("TWOCAPTCHA_API_KEY", "").strip() or None
 
 
-def _extract_cf_params(page) -> dict:
-    """
-    Extract Turnstile/CF challenge params from the challenge page.
-
-    CF managed challenge pages embed params in multiple ways:
-      - window._cf_chl_opt (older style)
-      - A <script> with chlPageData, action, sitekey
-      - The /cdn-cgi/challenge-platform script sets window.turnstile
-
-    We extract from whatever is available on the page.
-    """
-    return page.evaluate("""
-    () => {
-        const result = {
-            sitekey: null,
-            action: null,
-            data: null,
-            pagedata: null,
-            scripts: [],
-            cfChlOpt: null,
-            formHtml: null,
-        };
-
-        // Method 1: window._cf_chl_opt (common in managed challenges)
-        if (window._cf_chl_opt) {
-            result.cfChlOpt = JSON.stringify(window._cf_chl_opt);
-            result.sitekey = window._cf_chl_opt.siteKey || null;
-            result.action = window._cf_chl_opt.action || null;
-            result.data = window._cf_chl_opt.cData || null;
-            result.pagedata = window._cf_chl_opt.chlPageData || null;
-        }
-
-        // Method 2: scan all <script> tags for embedded params
-        document.querySelectorAll('script').forEach(s => {
-            const src = s.src || '';
-            const text = s.textContent || '';
-            result.scripts.push({ src: src.slice(0, 200), textLen: text.length, text: text.slice(0, 500) });
-
-            // Look for sitekey in script text
-            const sitekeyMatch = text.match(/siteKey['"\\s:]+['"]([^'"]+)['"]/);
-            if (sitekeyMatch && !result.sitekey) result.sitekey = sitekeyMatch[1];
-
-            const actionMatch = text.match(/action['"\\s:]+['"]([^'"]+)['"]/);
-            if (actionMatch && !result.action) result.action = actionMatch[1];
-
-            const cDataMatch = text.match(/cData['"\\s:]+['"]([^'"]+)['"]/);
-            if (cDataMatch && !result.data) result.data = cDataMatch[1];
-
-            const pageDataMatch = text.match(/chlPageData['"\\s:]+['"]([^'"]+)['"]/);
-            if (pageDataMatch && !result.pagedata) result.pagedata = pageDataMatch[1];
-        });
-
-        // Method 3: check for CF challenge form
-        const form = document.querySelector('form#challenge-form, form[action*="cf-chl"]');
-        if (form) result.formHtml = form.outerHTML.slice(0, 1000);
-
-        // Method 4: check for turnstile div
-        const turnstileDiv = document.querySelector('.cf-turnstile, [data-sitekey]');
-        if (turnstileDiv) {
-            result.sitekey = result.sitekey || turnstileDiv.getAttribute('data-sitekey');
-        }
-
-        return result;
-    }
-    """)
-
-
 def _solve_cf_with_2captcha(page, url: str) -> str:
     """
     Solve a Cloudflare managed challenge using 2captcha's Turnstile solver.
 
-    Flow:
-      1. Navigate to the CF challenge page
-      2. Extract sitekey + params from the page (multiple methods)
-      3. Send to 2captcha API
-      4. Get token back, inject into page via CF's callback or form submit
-      5. Wait for redirect
-
-    Returns the page title after successful redirect.
+    CF managed challenge flow on kv.ee:
+      - Page loads with _cf_chl_opt (obfuscated keys) and two scripts:
+        1. /cdn-cgi/challenge-platform/... (orchestrator)
+        2. challenges.cloudflare.com/turnstile/v0/.../api.js?onload=X&render=explicit
+      - Once api.js loads, CF calls the onload callback (e.g. cAdz2)
+      - That callback calls turnstile.render(container, {sitekey, action, cData, ...})
+      - We intercept api.js via Playwright route handler, replace it with a stub
+        that exposes turnstile.render as a capture function.
+      - Once params are captured, we send to 2captcha.
+      - 2captcha returns a token.
+      - We call the captured CF callback with the token → CF sets cf-clearance
+        and redirects.
     """
     api_key = _get_2captcha_key()
     if not api_key:
@@ -209,44 +146,109 @@ def _solve_cf_with_2captcha(page, url: str) -> str:
             "Set it on Railway to enable CF challenge solving."
         )
 
-    # Step 1: navigate to the CF challenge page
+    # Step 1: set up a route handler that intercepts the Turnstile api.js
+    # and replaces it with our stub. The stub:
+    #   - Defines window.turnstile with a render() that captures params
+    #   - Calls the onload callback (from the URL ?onload=X param) so CF
+    #     proceeds to call turnstile.render()
+
+    def handle_turnstile(route):
+        request_url = route.request.url
+        # Extract the onload callback name from the URL
+        # e.g. ?onload=cAdz2&render=explicit
+        onload = ""
+        if "onload=" in request_url:
+            onload = request_url.split("onload=")[1].split("&")[0]
+
+        # Our replacement script:
+        # - Creates window.turnstile with a render() that stores params
+        # - Calls the onload function so CF proceeds
+        stub = f"""
+        (function() {{
+            window.__cf_params = null;
+            window.__cf_callback = null;
+            window.turnstile = {{
+                render: function(container, opts) {{
+                    window.__cf_params = {{
+                        sitekey: opts.sitekey,
+                        action: opts.action || '',
+                        data: opts.cData || '',
+                        pagedata: opts.chlPageData || ''
+                    }};
+                    window.__cf_callback = opts.callback;
+                    return 'intercepted';
+                }}
+            }};
+            // Call CF's onload so it proceeds to call turnstile.render()
+            if (typeof {onload} === 'function') {{
+                {onload}();
+            }} else {{
+                // onload might not be defined yet — schedule it
+                setTimeout(function() {{
+                    if (typeof {onload} === 'function') {onload}();
+                }}, 100);
+            }}
+        }})();
+        """
+        route.fulfill(
+            status=200,
+            content_type="application/javascript",
+            body=stub,
+        )
+
+    page.route("**/challenges.cloudflare.com/turnstile/**", handle_turnstile)
+
+    # Step 2: navigate — CF serves challenge page, api.js gets intercepted
     page.goto(url, wait_until="domcontentloaded", timeout=60000)
-    page.wait_for_timeout(3000)  # let CF scripts load
 
     title = page.evaluate("() => document.title")
     if "just a moment" not in title.lower():
-        # No challenge — already on the real page
+        page.unroute("**/challenges.cloudflare.com/turnstile/**")
         return title
 
-    # Step 2: extract CF params from the page
-    print("  Extracting CF challenge params...")
-    params = _extract_cf_params(page)
-    print(
-        f"  CF params: sitekey={params['sitekey']}, action={params['action']}, "
-        f"scripts={len(params['scripts'])}, cfChlOpt={params['cfChlOpt'] is not None}"
-    )
+    # Step 3: wait for our interceptor to capture the params
+    print("  Waiting for CF turnstile params via intercepted api.js...")
+    params = None
+    for _ in range(60):  # up to 30s
+        page.wait_for_timeout(500)
+        params = page.evaluate("() => window.__cf_params")
+        if params and params.get("sitekey"):
+            break
 
-    if not params["sitekey"]:
-        # Dump everything we found for diagnosis
+    page.unroute("**/challenges.cloudflare.com/turnstile/**")
+
+    if not params or not params.get("sitekey"):
+        # Dump what we have for diagnosis
+        cf_chl_opt_text = page.evaluate("""
+        () => {
+            const scripts = document.querySelectorAll('script');
+            for (const s of scripts) {
+                if (s.textContent.includes('_cf_chl_opt')) {
+                    return s.textContent.slice(0, 2000);
+                }
+            }
+            return 'no _cf_chl_opt script found';
+        }
+        """)
         raise RuntimeError(
-            f"Could not find sitekey on CF challenge page.\n"
-            f"Scripts found: {params['scripts']}\n"
-            f"cfChlOpt: {params['cfChlOpt']}\n"
-            f"formHtml: {params['formHtml']}"
+            f"CF turnstile.render() was not called after api.js interception.\n"
+            f"Captured params: {params}\n"
+            f"_cf_chl_opt script: {cf_chl_opt_text}"
         )
 
-    # Step 3: submit to 2captcha
+    print(f"  Got CF params: sitekey={params['sitekey']}, action={params['action']}")
+
+    # Step 4: submit to 2captcha
     task = {
         "type": "TurnstileTaskProxyless",
         "websiteURL": url,
         "websiteKey": params["sitekey"],
     }
-    # Only include optional params if present
-    if params["action"]:
+    if params.get("action"):
         task["action"] = params["action"]
-    if params["data"]:
+    if params.get("data"):
         task["data"] = params["data"]
-    if params["pagedata"]:
+    if params.get("pagedata"):
         task["pagedata"] = params["pagedata"]
 
     task_payload = {"clientKey": api_key, "task": task}
@@ -264,7 +266,7 @@ def _solve_cf_with_2captcha(page, url: str) -> str:
     task_id = resp["taskId"]
     print(f"  2captcha task created: {task_id}")
 
-    # Step 4: poll for result
+    # Step 5: poll for result
     for attempt in range(24):  # up to 120s (5s intervals)
         time.sleep(5)
         req = _urllib_request.Request(
@@ -281,38 +283,18 @@ def _solve_cf_with_2captcha(page, url: str) -> str:
             token = result["solution"]["token"]
             print(f"  2captcha solved (attempt {attempt + 1})")
             break
-        # status == "notReady", keep polling
     else:
         raise RuntimeError("2captcha did not return a solution within 120s")
 
-    # Step 5: inject the token. CF challenge pages have a hidden input
-    # named cf-turnstile-response inside a form. Set it and submit.
+    # Step 6: call the CF callback with the token.
+    # This is what CF expects — it processes the token, sets cf-clearance
+    # cookie, and submits an internal form that redirects to the real page.
     page.evaluate(
-        """
-    (token) => {
-        // Try method A: set cf-turnstile-response input and submit form
-        const input = document.querySelector('input[name="cf-turnstile-response"]');
-        const form = document.querySelector('form#challenge-form');
-        if (input && form) {
-            input.value = token;
-            form.submit();
-            return 'form-submitted';
-        }
-        // Try method B: call turnstile callback if it exists
-        if (window.__cf_callback) {
-            window.__cf_callback(token);
-            return 'callback-called';
-        }
-        // Try method C: dispatch event that CF listens for
-        const event = new Event('cf-turnstile-response');
-        document.dispatchEvent(event);
-        return 'event-dispatched';
-    }
-    """,
+        "(token) => { if (window.__cf_callback) window.__cf_callback(token); }",
         token,
     )
 
-    # Wait for CF to process and redirect
+    # Wait for CF to redirect
     print("  Waiting for CF redirect after token injection...")
     for _ in range(30):  # up to 15s
         page.wait_for_timeout(500)
@@ -322,7 +304,6 @@ def _solve_cf_with_2captcha(page, url: str) -> str:
             page.wait_for_timeout(1000)
             return title
 
-    # Try waiting for navigation
     try:
         with page.expect_navigation(timeout=15000, wait_until="domcontentloaded"):
             pass
@@ -334,141 +315,7 @@ def _solve_cf_with_2captcha(page, url: str) -> str:
         pass
 
     raise RuntimeError(
-        f"CF challenge token was injected but page did not redirect.\n"
-        f"URL: {page.url}\nTitle: {page.evaluate('() => document.title')}"
-    )
-
-    # Step 1: inject interceptor BEFORE navigating, so it's ready when
-    # CF's script calls turnstile.render().
-    # We store captured params in window.__cf_params and the callback in
-    # window.__cf_callback so we can retrieve them from Python.
-    intercept_js = """
-    (function() {
-        window.__cf_params = null;
-        window.__cf_callback = null;
-
-        // Poll for window.turnstile appearing (CF loads it dynamically)
-        const i = setInterval(() => {
-            if (window.turnstile) {
-                clearInterval(i);
-                const orig = window.turnstile.render;
-                window.turnstile.render = function(container, opts) {
-                    window.__cf_params = {
-                        sitekey: opts.sitekey,
-                        action: opts.action || '',
-                        data: opts.cData || '',
-                        pagedata: opts.chlPageData || ''
-                    };
-                    window.__cf_callback = opts.callback;
-                    // Return a dummy id so CF doesn't error
-                    return 'intercepted';
-                };
-            }
-        }, 50);
-    })();
-    """
-    page.evaluate(intercept_js)
-
-    # Step 2: navigate to the CF challenge page
-    page.goto(url, wait_until="domcontentloaded", timeout=60000)
-
-    # Wait for CF's script to load and our interceptor to fire
-    print("  Waiting for CF turnstile params...")
-    for _ in range(40):  # up to 20s
-        page.wait_for_timeout(500)
-        params = page.evaluate("() => window.__cf_params")
-        if params:
-            break
-    else:
-        # Fallback: maybe CF solved itself or page redirected
-        title = page.evaluate("() => document.title")
-        if "just a moment" not in title.lower():
-            return title
-        raise RuntimeError(
-            "CF challenge loaded but turnstile.render() was never called. "
-            f"URL: {page.url}"
-        )
-
-    print(f"  Got CF params: sitekey={params['sitekey']}, action={params['action']}")
-
-    # Step 3: submit to 2captcha
-    task_payload = {
-        "clientKey": api_key,
-        "task": {
-            "type": "TurnstileTaskProxyless",
-            "websiteURL": url,
-            "websiteKey": params["sitekey"],
-            "action": params["action"],
-            "data": params["data"],
-            "pagedata": params["pagedata"],
-        },
-    }
-
-    req = _urllib_request.Request(
-        "https://api.2captcha.com/createTask",
-        data=_json.dumps(task_payload).encode(),
-        headers={"Content-Type": "application/json"},
-    )
-    resp = _json.loads(_urllib_request.urlopen(req).read())
-
-    if resp.get("errorId", 0) != 0:
-        raise RuntimeError(f"2captcha createTask error: {resp}")
-
-    task_id = resp["taskId"]
-    print(f"  2captcha task created: {task_id}")
-
-    # Step 4: poll for result
-    for attempt in range(24):  # up to 120s (5s intervals)
-        time.sleep(5)
-        req = _urllib_request.Request(
-            "https://api.2captcha.com/getTaskResult",
-            data=_json.dumps({"clientKey": api_key, "taskId": task_id}).encode(),
-            headers={"Content-Type": "application/json"},
-        )
-        result = _json.loads(_urllib_request.urlopen(req).read())
-
-        if result.get("errorId", 0) != 0:
-            raise RuntimeError(f"2captcha getTaskResult error: {result}")
-
-        if result["status"] == "ready":
-            token = result["solution"]["token"]
-            print(f"  2captcha solved (attempt {attempt + 1})")
-            break
-        # status == "notReady", keep polling
-    else:
-        raise RuntimeError("2captcha did not return a solution within 120s")
-
-    # Step 5: execute the CF callback with the token.
-    # This triggers CF's internal flow: it validates the token, sets
-    # cf-clearance cookie, and submits the form which redirects to the
-    # real page.
-    page.evaluate(
-        "(token) => { if (window.__cf_callback) window.__cf_callback(token); }", token
-    )
-
-    # Wait for CF to process and redirect
-    print("  Waiting for CF redirect after token injection...")
-    for _ in range(20):  # up to 10s
-        page.wait_for_timeout(500)
-        title = page.evaluate("() => document.title")
-        if "just a moment" not in title.lower():
-            print(f"  CF solved! Page title: {title}")
-            page.wait_for_timeout(1000)
-            return title
-
-    # If still on challenge page, try waiting longer for navigation
-    try:
-        with page.expect_navigation(timeout=15000, wait_until="domcontentloaded"):
-            pass
-        title = page.evaluate("() => document.title")
-        if "just a moment" not in title.lower():
-            print(f"  CF solved after navigation wait! Title: {title}")
-            return title
-    except Exception:
-        pass
-
-    raise RuntimeError(
-        f"CF challenge token was accepted but page did not redirect.\n"
+        f"CF token injected but page did not redirect.\n"
         f"URL: {page.url}\nTitle: {page.evaluate('() => document.title')}"
     )
 
