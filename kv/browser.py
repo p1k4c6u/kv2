@@ -116,7 +116,10 @@ def with_browser_visible(fn):
 import json as _json
 import urllib.request as _urllib_request
 
-TWOCAPTCHA_API_KEY = os.environ.get("TWOCAPTCHA_API_KEY", "").strip() or None
+
+def _get_2captcha_key() -> str | None:
+    """Read TWOCAPTCHA_API_KEY fresh from env each time (not cached at import)."""
+    return os.environ.get("TWOCAPTCHA_API_KEY", "").strip() or None
 
 
 def _solve_cf_with_2captcha(page, url: str) -> str:
@@ -134,7 +137,8 @@ def _solve_cf_with_2captcha(page, url: str) -> str:
 
     Returns the page title after successful redirect.
     """
-    if not TWOCAPTCHA_API_KEY:
+    api_key = _get_2captcha_key()
+    if not api_key:
         raise RuntimeError(
             "TWOCAPTCHA_API_KEY env var is not set. "
             "Set it on Railway to enable CF challenge solving."
@@ -195,7 +199,7 @@ def _solve_cf_with_2captcha(page, url: str) -> str:
 
     # Step 3: submit to 2captcha
     task_payload = {
-        "clientKey": TWOCAPTCHA_API_KEY,
+        "clientKey": api_key,
         "task": {
             "type": "TurnstileTaskProxyless",
             "websiteURL": url,
@@ -224,9 +228,7 @@ def _solve_cf_with_2captcha(page, url: str) -> str:
         time.sleep(5)
         req = _urllib_request.Request(
             "https://api.2captcha.com/getTaskResult",
-            data=_json.dumps(
-                {"clientKey": TWOCAPTCHA_API_KEY, "taskId": task_id}
-            ).encode(),
+            data=_json.dumps({"clientKey": api_key, "taskId": task_id}).encode(),
             headers={"Content-Type": "application/json"},
         )
         result = _json.loads(_urllib_request.urlopen(req).read())
@@ -290,7 +292,9 @@ def cf_goto(page, url):
     """
     # If 2captcha is configured, use it proactively — inject the
     # interceptor before navigating so we catch turnstile.render().
-    if TWOCAPTCHA_API_KEY:
+    two_captcha_key = _get_2captcha_key()
+    print(f"  cf_goto: TWOCAPTCHA_API_KEY={'SET' if two_captcha_key else 'NOT SET'}")
+    if two_captcha_key:
         _solve_cf_with_2captcha(page, url)
         return
 
