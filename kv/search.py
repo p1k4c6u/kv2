@@ -94,16 +94,28 @@ def get_listing_urls(
     def run(page):
         for page_no in range(1, max_pages + 1):
             url = search_base + f"&page={page_no}"
-            page.goto(url, wait_until="domcontentloaded")
+            page.goto(url, wait_until="networkidle", timeout=30000)
 
             body = page.inner_text("body")
+
             if "Turvakontroll" in body:
-                input("Lahenda turvakontroll ja vajuta Enter...")
+                # Can't solve captcha in headless/background mode — raise so it surfaces
+                raise RuntimeError(
+                    f"Captcha detected on page {page_no}. Body snippet: {body[:500]}"
+                )
 
             batch = extract_listing_urls(page)
             new = batch - all_urls
 
             print(f"page {page_no}: +{len(new)} (total {len(all_urls) + len(new)})")
+
+            # On page 1 with no results, log body for diagnosis
+            if page_no == 1 and not new:
+                raise RuntimeError(
+                    f"Zero listing URLs found on page 1. "
+                    f"Search URL: {url}\n"
+                    f"Body snippet: {body[:1000]}"
+                )
 
             if not new:
                 break
