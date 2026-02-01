@@ -326,8 +326,10 @@ def cf_goto(page, url):
 
     html = page.content()
     raise RuntimeError(
-        f"CF challenge did not resolve after ~60s.\n"
+        f"CF challenge did not resolve after ~60s. "
+        f"[TWOCAPTCHA_API_KEY={'SET' if two_captcha_key else 'NOT SET'}, "
+        f"env keys: {[k for k in os.environ if 'CAPTCHA' in k.upper() or 'TWO' in k.upper()]}]\n"
         f"Current URL: {page.url}\n"
         f"Title: {title}\n"
-        f"HTML snippet: {html[:3000]}"
+        f"HTML snippet: {html[:2000]}"
     )
