@@ -1,5 +1,6 @@
 # browser.py
 import os
+import time
 from playwright.sync_api import sync_playwright
 from undetected_playwright import Tarnished
 
@@ -23,25 +24,33 @@ def with_browser(fn, headless: bool | None = None):
 
     with sync_playwright() as p:
         if use_headless:
-            # Headless mode with stealth for cloud/automated scraping
-            # Using Chrome's new headless mode which is less detectable
+            # Launch with headless=False but pass --headless=new as a Chrome arg.
+            # This uses Chrome's newer headless mode which behaves like a real browser
+            # (no Headless flag in navigator, realistic rendering). Passing headless=True
+            # to Playwright conflicts with --headless=new and breaks stealth.
             browser = p.chromium.launch(
-                headless=True,
+                headless=False,
                 args=[
-                    "--headless=new",  # New headless mode (Chrome 112+)
+                    "--headless=new",
                     "--disable-blink-features=AutomationControlled",
                     "--disable-dev-shm-usage",
                     "--no-sandbox",
+                    "--disable-gpu",
                 ],
             )
             context = browser.new_context(
                 viewport={"width": 1280, "height": 900},
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                 locale="et-EE",
+                # Don't set user_agent here — let Tarnished handle it so it
+                # matches the actual Chromium version shipped with Playwright.
             )
             # Apply stealth patches to avoid bot detection
             Tarnished.apply_stealth(context)
             page = context.new_page()
+
+            # Brief pause before first navigation — mimics real browser startup
+            time.sleep(1)
+
             try:
                 return fn(page)
             finally:
