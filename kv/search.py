@@ -107,8 +107,8 @@ def get_listing_urls(
             print(f"  bot-detection page hit, waiting for auto-redirect...")
             page.wait_for_timeout(10000)
 
-            # Check if we got redirected
-            current_url = page.url()
+            # Check if we got redirected (page.url is a property, not a method)
+            current_url = page.url
             body = page.inner_text("body")
             print(
                 f"  after wait: url={current_url}, still blocked={'tuvastas' in body.lower()}"
