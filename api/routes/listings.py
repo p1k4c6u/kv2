@@ -115,6 +115,60 @@ async def get_listing_stats(
     )
 
 
+@router.get("/debug-owner")
+async def debug_owner_status(
+    _: bool = Depends(verify_token),
+):
+    """
+    Temporary debug endpoint — shows is_owner_direct distribution
+    and a sample of seller_info / raw text so we can see what kv.ee
+    actually returns. DELETE THIS after the detection is confirmed working.
+    """
+    import psycopg
+    import json
+    from db import DB_URL
+
+    with psycopg.connect(DB_URL, connect_timeout=10) as conn:
+        with conn.cursor() as cur:
+            # Counts by is_owner_direct value
+            cur.execute("""
+                SELECT
+                    is_owner_direct,
+                    COUNT(*) as cnt
+                FROM kv_listings
+                GROUP BY is_owner_direct
+                ORDER BY is_owner_direct
+            """)
+            counts = [
+                {"is_owner_direct": row[0], "count": row[1]} for row in cur.fetchall()
+            ]
+
+            # 5 sample rows: id, is_owner_direct, seller_info, first 500 chars of raw
+            cur.execute("""
+                SELECT listing_id, is_owner_direct, seller_info, raw
+                FROM kv_listings
+                ORDER BY last_seen_at DESC
+                LIMIT 5
+            """)
+            samples = []
+            for row in cur.fetchall():
+                raw = row[3]
+                if isinstance(raw, str):
+                    raw = json.loads(raw)
+                # Pull description from raw so we can search for owner-related text
+                desc = (raw or {}).get("description", "") or ""
+                samples.append(
+                    {
+                        "listing_id": row[0],
+                        "is_owner_direct": row[1],
+                        "seller_info": row[2],
+                        "description_snippet": desc[:500],
+                    }
+                )
+
+    return {"counts": counts, "samples": samples}
+
+
 @router.get("/{listing_id}", response_model=ListingDetail)
 async def get_listing(
     listing_id: str,
