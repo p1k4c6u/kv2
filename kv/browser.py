@@ -1,6 +1,7 @@
 # browser.py
 import os
 import time
+from urllib.parse import urlparse
 from playwright.sync_api import sync_playwright
 from undetected_playwright import Tarnished
 
@@ -18,10 +19,27 @@ PROXY_URL = os.environ.get("PROXY_URL", "").strip() or None
 
 
 def _proxy_config() -> dict | None:
-    """Return Playwright proxy config dict, or None if no proxy set."""
+    """
+    Parse PROXY_URL into Playwright proxy config.
+
+    Playwright requires username/password as separate fields — it doesn't
+    reliably extract them from the server URL when auth is embedded.
+    """
     if not PROXY_URL:
         return None
-    return {"server": PROXY_URL.rstrip("/")}
+
+    parsed = urlparse(PROXY_URL)
+
+    # server URL without credentials: scheme://host:port
+    server = f"{parsed.scheme}://{parsed.hostname}:{parsed.port}"
+
+    config = {"server": server}
+    if parsed.username:
+        config["username"] = parsed.username
+    if parsed.password:
+        config["password"] = parsed.password
+
+    return config
 
 
 def with_browser(fn, headless: bool | None = None):
