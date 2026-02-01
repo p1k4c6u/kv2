@@ -94,7 +94,8 @@ def get_listing_urls(
     def run(page):
         for page_no in range(1, max_pages + 1):
             url = search_base + f"&page={page_no}"
-            page.goto(url, wait_until="networkidle", timeout=30000)
+            page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            page.wait_for_timeout(3000)  # give JS time to render listing links
 
             body = page.inner_text("body")
 
