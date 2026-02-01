@@ -21,7 +21,7 @@ def _proxy_config() -> dict | None:
     """Return Playwright proxy config dict, or None if no proxy set."""
     if not PROXY_URL:
         return None
-    return {"server": PROXY_URL}
+    return {"server": PROXY_URL.rstrip("/")}
 
 
 def with_browser(fn, headless: bool | None = None):
