@@ -48,10 +48,13 @@ async def root():
 @app.get("/api/health")
 async def health():
     """Detailed health check."""
+    import os
+
     return {
         "status": "healthy",
         "database": bool(settings.DATABASE_URL),
         "openrouter": bool(settings.OPENROUTER_API_KEY),
+        "env_vars": sorted(os.environ.keys()),
     }
 
 
