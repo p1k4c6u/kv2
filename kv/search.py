@@ -93,9 +93,9 @@ def get_listing_urls(
 
     def _goto_with_retry(page, url):
         """
-        Navigate to url. If we land on the bot-detection page ("tuvastas võimaliku
-        tórke"), wait 5s and retry once — kv.ee sometimes serves it as a one-time
-        challenge before redirecting to the real page.
+        Navigate to url. If we land on the bot-detection page, wait for
+        kv.ee's auto-redirect (it promises one). If that doesn't work,
+        raise with full HTML so we can see what's happening.
         Returns the body text after successful load.
         """
         page.goto(url, wait_until="domcontentloaded", timeout=30000)
@@ -103,14 +103,24 @@ def get_listing_urls(
         body = page.inner_text("body")
 
         if "tuvastas võimaliku" in body.lower():
-            # Wait for the redirect kv.ee promises, then retry
-            print(f"  bot-detection page hit, waiting 5s and retrying...")
-            page.wait_for_timeout(5000)
-            # Sometimes kv.ee auto-redirects; if not, navigate again
-            if "tuvastas võimaliku" in page.inner_text("body").lower():
-                page.goto(url, wait_until="domcontentloaded", timeout=30000)
-                page.wait_for_timeout(3000)
+            # kv.ee says it will redirect — wait up to 10s for that to happen
+            print(f"  bot-detection page hit, waiting for auto-redirect...")
+            page.wait_for_timeout(10000)
+
+            # Check if we got redirected
+            current_url = page.url()
             body = page.inner_text("body")
+            print(
+                f"  after wait: url={current_url}, still blocked={'tuvastas' in body.lower()}"
+            )
+
+            if "tuvastas võimaliku" in body.lower():
+                # Still blocked — capture full HTML for diagnosis
+                html = page.content()
+                raise RuntimeError(
+                    f"Bot detection persisted after 10s wait. URL: {current_url}\n"
+                    f"Full HTML:\n{html[:3000]}"
+                )
 
         return body
 
@@ -128,12 +138,6 @@ def get_listing_urls(
             if "Turvakontroll" in body:
                 raise RuntimeError(
                     f"Captcha detected on page {page_no}. Body snippet: {body[:500]}"
-                )
-
-            if "tuvastas võimaliku" in body.lower():
-                raise RuntimeError(
-                    f"Bot detection page persisted after retry on page {page_no}. "
-                    f"Body snippet: {body[:500]}"
                 )
 
             batch = extract_listing_urls(page)
