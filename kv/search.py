@@ -91,18 +91,49 @@ def get_listing_urls(
     search_base = build_search_url(city, owner_only=owner_only)
     all_urls = set()
 
-    def run(page):
-        for page_no in range(1, max_pages + 1):
-            url = search_base + f"&page={page_no}"
-            page.goto(url, wait_until="domcontentloaded", timeout=30000)
-            page.wait_for_timeout(3000)  # give JS time to render listing links
+    def _goto_with_retry(page, url):
+        """
+        Navigate to url. If we land on the bot-detection page ("tuvastas võimaliku
+        tórke"), wait 5s and retry once — kv.ee sometimes serves it as a one-time
+        challenge before redirecting to the real page.
+        Returns the body text after successful load.
+        """
+        page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        page.wait_for_timeout(3000)
+        body = page.inner_text("body")
 
+        if "tuvastas võimaliku" in body.lower():
+            # Wait for the redirect kv.ee promises, then retry
+            print(f"  bot-detection page hit, waiting 5s and retrying...")
+            page.wait_for_timeout(5000)
+            # Sometimes kv.ee auto-redirects; if not, navigate again
+            if "tuvastas võimaliku" in page.inner_text("body").lower():
+                page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                page.wait_for_timeout(3000)
             body = page.inner_text("body")
 
+        return body
+
+    def run(page):
+        # Warm up: visit homepage first to get cookies/session tokens set.
+        # kv.ee often blocks direct deep-links but allows navigation from homepage.
+        print("warming up via homepage...")
+        page.goto(f"{BASE}/", wait_until="domcontentloaded", timeout=30000)
+        page.wait_for_timeout(2000)
+
+        for page_no in range(1, max_pages + 1):
+            url = search_base + f"&page={page_no}"
+            body = _goto_with_retry(page, url)
+
             if "Turvakontroll" in body:
-                # Can't solve captcha in headless/background mode — raise so it surfaces
                 raise RuntimeError(
                     f"Captcha detected on page {page_no}. Body snippet: {body[:500]}"
+                )
+
+            if "tuvastas võimaliku" in body.lower():
+                raise RuntimeError(
+                    f"Bot detection page persisted after retry on page {page_no}. "
+                    f"Body snippet: {body[:500]}"
                 )
 
             batch = extract_listing_urls(page)
