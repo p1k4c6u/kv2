@@ -11,6 +11,18 @@ PROFILE_DIR = "kv_profile"
 # Set HEADLESS=false (or don't set) for local with visible browser
 HEADLESS = os.environ.get("HEADLESS", "false").lower() == "true"
 
+# Optional proxy for bypassing Cloudflare on datacenter IPs.
+# Format: http://user:pass@host:port  or  socks5://user:pass@host:port
+# Without a proxy, CF managed challenges will block headless scraping.
+PROXY_URL = os.environ.get("PROXY_URL", "").strip() or None
+
+
+def _proxy_config() -> dict | None:
+    """Return Playwright proxy config dict, or None if no proxy set."""
+    if not PROXY_URL:
+        return None
+    return {"server": PROXY_URL}
+
 
 def with_browser(fn, headless: bool | None = None):
     """
@@ -37,6 +49,7 @@ def with_browser(fn, headless: bool | None = None):
                     "--no-sandbox",
                     "--disable-gpu",
                 ],
+                proxy=_proxy_config(),
             )
             context = browser.new_context(
                 viewport={"width": 1280, "height": 900},
@@ -63,6 +76,7 @@ def with_browser(fn, headless: bool | None = None):
                 PROFILE_DIR,
                 headless=False,
                 viewport={"width": 1280, "height": 900},
+                proxy=_proxy_config(),
             )
             page = context.new_page()
             try:
