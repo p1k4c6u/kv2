@@ -93,33 +93,43 @@ def get_listing_urls(
 
     def _goto_with_retry(page, url):
         """
-        Navigate to url. If we land on the bot-detection page, wait for
-        kv.ee's auto-redirect (it promises one). If that doesn't work,
-        raise with full HTML so we can see what's happening.
+        Navigate to url. kv.ee uses a Cloudflare-style "Just a moment..."
+        JS challenge page. The challenge script auto-solves and redirects
+        back to the target URL. We wait for that navigation to happen.
         Returns the body text after successful load.
         """
         page.goto(url, wait_until="domcontentloaded", timeout=30000)
-        page.wait_for_timeout(3000)
+        page.wait_for_timeout(2000)
         body = page.inner_text("body")
 
-        if "tuvastas võimaliku" in body.lower():
-            # kv.ee says it will redirect — wait up to 10s for that to happen
-            print(f"  bot-detection page hit, waiting for auto-redirect...")
-            page.wait_for_timeout(10000)
-
-            # Check if we got redirected (page.url is a property, not a method)
-            current_url = page.url
-            body = page.inner_text("body")
+        if "tuvastas võimaliku" in body.lower() or "just a moment" in body.lower():
             print(
-                f"  after wait: url={current_url}, still blocked={'tuvastas' in body.lower()}"
+                f"  Cloudflare-style challenge page hit, waiting for JS solve + redirect..."
             )
+            try:
+                # The challenge page JS will solve and navigate back to the target.
+                # Wait for URL to change away from the challenge page.
+                # Cloudflare challenges typically solve within 5-15s.
+                page.wait_for_function(
+                    f"() => !document.title.includes('Just a moment')",
+                    timeout=30000,
+                    polling_interval=500,
+                )
+                # After title changes, wait for content to load
+                page.wait_for_timeout(3000)
+            except Exception:
+                # Fallback: just wait and check
+                page.wait_for_timeout(15000)
 
-            if "tuvastas võimaliku" in body.lower():
-                # Still blocked — capture full HTML for diagnosis
+            body = page.inner_text("body")
+            current_url = page.url
+            print(f"  after challenge wait: url={current_url}")
+
+            if "tuvastas võimaliku" in body.lower() or "just a moment" in body.lower():
                 html = page.content()
                 raise RuntimeError(
-                    f"Bot detection persisted after 10s wait. URL: {current_url}\n"
-                    f"Full HTML:\n{html[:3000]}"
+                    f"Cloudflare challenge did not resolve after 30s. URL: {current_url}\n"
+                    f"Full HTML:\n{html[:5000]}"
                 )
 
         return body
