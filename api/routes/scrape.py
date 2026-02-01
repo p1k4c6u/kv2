@@ -39,7 +39,7 @@ def run_scrape(area: str):
 
         init_db()
 
-        urls = get_listing_urls(area)
+        urls = get_listing_urls(area, owner_only=True)
 
         for url in urls:
             try:

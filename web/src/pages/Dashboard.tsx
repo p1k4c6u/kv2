@@ -5,17 +5,23 @@ import {
   getStats, 
   triggerAnalysis, 
   getAnalysisStatus,
+  triggerScrape,
+  getScrapeStatus,
 } from '../api';
 import type { ListingSummary, Stats, ListingsParams } from '../api';
 import { ListingCard } from '../components/ListingCard';
 import { Filters } from '../components/Filters';
 import { StatsCard } from '../components/StatsCard';
 
+const SCRAPE_AREAS = ['tallinn', 'tartu', 'harjumaa', 'jõgevamaa'];
+
 export function DashboardPage() {
   const [listings, setListings] = useState<ListingSummary[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
   const [analyzing, setAnalyzing] = useState(false);
+  const [scraping, setScraping] = useState(false);
+  const [scrapeArea, setScrapeArea] = useState('tallinn');
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [total, setTotal] = useState(0);
   const [filters, setFilters] = useState<ListingsParams>({
@@ -44,19 +50,41 @@ export function DashboardPage() {
       return () => clearInterval(interval);
     }
   }, [analyzing]);
+
+  // Check scrape status periodically
+  useEffect(() => {
+    if (scraping) {
+      const interval = setInterval(async () => {
+        const status = await getScrapeStatus();
+        if (!status.running) {
+          setScraping(false);
+          loadData();
+          const result = status.last_result;
+          if (result?.status === 'error') {
+            setMessage({ type: 'error', text: `Scrape failed: ${result.error}` });
+          } else {
+            setMessage({ type: 'success', text: `Scrape complete — ${result?.listings_found ?? 0} listings found.` });
+          }
+        }
+      }, 5000);
+      return () => clearInterval(interval);
+    }
+  }, [scraping]);
   
   const loadData = async () => {
     setLoading(true);
     try {
-      const [listingsRes, statsRes, analysisStatus] = await Promise.all([
+      const [listingsRes, statsRes, analysisStatus, scrapeStatus] = await Promise.all([
         getListings(filters),
         getStats(),
         getAnalysisStatus(),
+        getScrapeStatus(),
       ]);
       setListings(listingsRes.listings);
       setTotal(listingsRes.total);
       setStats(statsRes);
       setAnalyzing(analysisStatus.running);
+      setScraping(scrapeStatus.running);
     } catch (err) {
       console.error('Failed to load data:', err);
     } finally {
@@ -80,6 +108,23 @@ export function DashboardPage() {
       setMessage({ type: 'error', text: 'Failed to start analysis' });
     }
   };
+
+  const handleScrape = async () => {
+    try {
+      setMessage(null);
+      const result = await triggerScrape(scrapeArea);
+      if (result.status === 'started') {
+        setScraping(true);
+        setMessage({ type: 'success', text: result.message });
+      } else if (result.status === 'running') {
+        setMessage({ type: 'error', text: result.message });
+      } else {
+        setMessage({ type: 'error', text: result.message });
+      }
+    } catch (err) {
+      setMessage({ type: 'error', text: 'Failed to start scrape' });
+    }
+  };
   
   const totalPages = Math.ceil(total / (filters.per_page || 20));
   
@@ -88,7 +133,34 @@ export function DashboardPage() {
       {/* Header with actions */}
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-white">Dashboard</h1>
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3">
+          {/* Scrape: area selector + button */}
+          <select
+            value={scrapeArea}
+            onChange={(e) => setScrapeArea(e.target.value)}
+            disabled={scraping}
+            className="bg-slate-700 border border-slate-600 rounded px-3 py-2 text-white focus:outline-none focus:border-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {SCRAPE_AREAS.map((a) => (
+              <option key={a} value={a}>{a}</option>
+            ))}
+          </select>
+          <button
+            onClick={handleScrape}
+            disabled={scraping}
+            className="bg-green-600 hover:bg-green-700 disabled:bg-green-800 disabled:cursor-not-allowed text-white font-medium py-2 px-4 rounded transition-colors flex items-center gap-2"
+          >
+            {scraping ? (
+              <>
+                <span className="animate-spin">&#9696;</span>
+                Scraping...
+              </>
+            ) : (
+              'Scrape'
+            )}
+          </button>
+
+          {/* Analyze button */}
           <button
             onClick={handleAnalyze}
             disabled={analyzing}

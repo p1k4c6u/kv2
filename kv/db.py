@@ -38,6 +38,8 @@ CREATE TABLE IF NOT EXISTS kv_listings (
   additional_info_raw TEXT,
   description TEXT,
   raw JSONB,
+  is_owner_direct BOOLEAN,
+  seller_info TEXT,
   last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -73,12 +75,12 @@ UPSERT_LATEST = """
 INSERT INTO kv_listings (
   listing_id, url, title, price_eur, eur_per_m2, rooms, bedrooms, total_area, floors,
   year_built, condition, ownership, plot_area, cadastral_nr, energy_class,
-  additional_info, additional_info_raw, description, raw, last_seen_at
+  additional_info, additional_info_raw, description, raw, is_owner_direct, seller_info, last_seen_at
 )
 VALUES (
   %(listing_id)s, %(url)s, %(title)s, %(price_eur)s, %(eur_per_m2)s, %(rooms)s, %(bedrooms)s, %(total_area)s, %(floors)s,
   %(year_built)s, %(condition)s, %(ownership)s, %(plot_area)s, %(cadastral_nr)s, %(energy_class)s,
-  %(additional_info)s, %(additional_info_raw)s, %(description)s, %(raw)s, now()
+  %(additional_info)s, %(additional_info_raw)s, %(description)s, %(raw)s, %(is_owner_direct)s, %(seller_info)s, now()
 )
 ON CONFLICT (listing_id) DO UPDATE SET
   url = EXCLUDED.url,
@@ -99,6 +101,8 @@ ON CONFLICT (listing_id) DO UPDATE SET
   additional_info_raw = EXCLUDED.additional_info_raw,
   description = EXCLUDED.description,
   raw = EXCLUDED.raw,
+  is_owner_direct = EXCLUDED.is_owner_direct,
+  seller_info = EXCLUDED.seller_info,
   last_seen_at = now();
 """
 
@@ -129,10 +133,17 @@ def _compute_hash(d: dict) -> str:
     return hashlib.sha256(b).hexdigest()
 
 
+MIGRATE_SQL = """
+ALTER TABLE kv_listings ADD COLUMN IF NOT EXISTS is_owner_direct BOOLEAN;
+ALTER TABLE kv_listings ADD COLUMN IF NOT EXISTS seller_info TEXT;
+"""
+
+
 def init_db():
     with psycopg.connect(DB_URL, connect_timeout=10) as conn:
         with conn.cursor() as cur:
             cur.execute(CREATE_SQL)
+            cur.execute(MIGRATE_SQL)
         conn.commit()
 
 
@@ -167,6 +178,8 @@ def save_listing(data: dict):
         "additional_info_raw": data.get("additional_info_raw"),
         "description": data.get("description"),
         "raw": json.dumps(data, ensure_ascii=False),
+        "is_owner_direct": data.get("is_owner_direct"),
+        "seller_info": data.get("seller_info"),
         "content_hash": content_hash,
     }
 
@@ -234,6 +247,9 @@ def get_listings_with_analysis(
     # Build WHERE conditions
     conditions = []
     params = {}
+
+    # Hard filter: only owner-direct listings are visible in the app
+    conditions.append("l.is_owner_direct = true")
 
     if min_score is not None:
         conditions.append("a.score >= %(min_score)s")
@@ -305,6 +321,7 @@ def get_listing_by_id(listing_id: str) -> dict | None:
     FROM kv_listings l
     LEFT JOIN kv_analysis a ON l.listing_id = a.listing_id
     WHERE l.listing_id = %(listing_id)s
+      AND l.is_owner_direct = true
     """
     with psycopg.connect(DB_URL, connect_timeout=10) as conn:
         with conn.cursor() as cur:
@@ -335,6 +352,7 @@ def get_stats() -> dict:
         MAX(l.price_eur) as max_price
     FROM kv_listings l
     LEFT JOIN kv_analysis a ON l.listing_id = a.listing_id
+    WHERE l.is_owner_direct = true
     """
     with psycopg.connect(DB_URL, connect_timeout=10) as conn:
         with conn.cursor() as cur:

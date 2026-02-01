@@ -17,20 +17,23 @@ COUNTY_TO_ID = {
 }
 
 
-def build_search_url(area: str) -> str:
+def build_search_url(area: str, owner_only: bool = True) -> str:
     """
     area võib olla:
       - city (nt "tallinn") => county + parish
       - county (nt "harjumaa") => ainult county
+
+    owner_only: lisab &bid_objects=1 => ainult "otse omanikult" tulemused
     """
     area = area.lower().strip()
+    owner_param = "&bid_objects=1" if owner_only else ""
 
     # city
     if area in CITY_TO_FILTERS:
         f = CITY_TO_FILTERS[area]
         return (
             f"{BASE}/kinnisvara/korterid?"
-            f"act=search.simple&deal_type=1&county={f['county']}&parish={f['parish']}"
+            f"act=search.simple&deal_type=1&county={f['county']}&parish={f['parish']}{owner_param}"
         )
 
     # county
@@ -38,7 +41,7 @@ def build_search_url(area: str) -> str:
         county_id = COUNTY_TO_ID[area]
         return (
             f"{BASE}/kinnisvara/korterid?"
-            f"act=search.simple&deal_type=1&county={county_id}"
+            f"act=search.simple&deal_type=1&county={county_id}{owner_param}"
         )
 
     raise ValueError(
@@ -81,9 +84,11 @@ def extract_listing_urls(page) -> set[str]:
     return urls
 
 
-def get_listing_urls(city: str, max_pages: int = 50) -> list[str]:
+def get_listing_urls(
+    city: str, max_pages: int = 50, owner_only: bool = True
+) -> list[str]:
     city = city.lower().strip()
-    search_base = build_search_url(city)
+    search_base = build_search_url(city, owner_only=owner_only)
     all_urls = set()
 
     def run(page):

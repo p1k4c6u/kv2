@@ -4,8 +4,10 @@ import re
 from bs4 import BeautifulSoup
 from browser import with_browser
 
+
 def normalize_spaces(s: str) -> str:
     return re.sub(r"\s+", " ", s).strip()
+
 
 def extract_listing_id(url: str) -> str:
     m = re.search(r"/object/(\d+)", url)
@@ -16,11 +18,15 @@ def extract_listing_id(url: str) -> str:
         return m.group(1)
     return url
 
+
 def extract_description_text(soup: BeautifulSoup) -> str:
-    node = soup.select_one(".object-text, .object-description, .description, #description")
+    node = soup.select_one(
+        ".object-text, .object-description, .description, #description"
+    )
     if node:
         return node.get_text("\n", strip=True)
     return (soup.body or soup).get_text("\n", strip=True)
+
 
 def find_first(patterns: list[str], text: str):
     for p in patterns:
@@ -28,6 +34,7 @@ def find_first(patterns: list[str], text: str):
         if m:
             return normalize_spaces(m.group(1))
     return None
+
 
 def parse_listing(html: str) -> dict:
     soup = BeautifulSoup(html, "html.parser")
@@ -43,9 +50,9 @@ def parse_listing(html: str) -> dict:
     # proovime mitu varianti, sest mõnel lehel on teistmoodi
     price = find_first(
         [
-            r"(\d[\d\s\u00A0]*)\s*€",               # "1 150 000 €"
+            r"(\d[\d\s\u00A0]*)\s*€",  # "1 150 000 €"
         ],
-        full_text
+        full_text,
     )
     if price:
         data["price_eur"] = int(re.sub(r"[^\d]", "", price))
@@ -55,7 +62,7 @@ def parse_listing(html: str) -> dict:
             r"(\d[\d\s\u00A0]*)\s*€/m²",
             r"(\d[\d\s\u00A0]*)\s*€/m2",
         ],
-        full_text
+        full_text,
     )
     if eur_m2:
         data["eur_per_m2"] = int(re.sub(r"[^\d]", "", eur_m2))
@@ -68,7 +75,7 @@ def parse_listing(html: str) -> dict:
                 rf"{re.escape(label)}\s*[:\-]?\s*([0-9A-Za-zÕÄÖÜõäöü\.,]+(?:\s*m²|\s*m2|\s*km|\s*ha|\s*aasta|\s*korrus|\s*€)?)",
                 rf"{re.escape(label)}\s+([0-9A-Za-zÕÄÖÜõäöü\.,]+(?:\s*m²|\s*m2)?)",
             ],
-            full_text
+            full_text,
         )
 
     data["rooms"] = grab("Tube")
@@ -95,7 +102,21 @@ def parse_listing(html: str) -> dict:
         data["additional_info_raw"] = None
         data["additional_info"] = []
 
+    # Owner vs realtor detection — kv.ee marks direct-owner listings with "otse omanikult"
+    full_text_lower = full_text.lower()
+    data["is_owner_direct"] = "otse omanikult" in full_text_lower
+
+    # Grab seller/contact block raw text for reference
+    seller_node = soup.select_one(
+        ".seller-info, .contact-info, .object-seller, .agent-info, "
+        "[class*='seller'], [class*='contact'], [class*='agent']"
+    )
+    data["seller_info"] = (
+        normalize_spaces(seller_node.get_text(" ")) if seller_node else None
+    )
+
     return data
+
 
 def crawl_kv_listing(url: str) -> dict:
     def run(page):

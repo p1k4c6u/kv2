@@ -91,7 +91,8 @@ export function Filters({ filters, onChange }: FiltersProps) {
         </div>
       </div>
       
-      {/* Only Analyzed Toggle */}
+      {/* Only Analyzed Toggle — hidden for now; backend param still exists if needed later */}
+      {/*
       <div className="mt-4 flex items-center gap-2">
         <input
           type="checkbox"
@@ -104,6 +105,7 @@ export function Filters({ filters, onChange }: FiltersProps) {
           Only show analyzed listings
         </label>
       </div>
+      */}
     </div>
   );
 }

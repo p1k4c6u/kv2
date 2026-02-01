@@ -65,6 +65,7 @@ def fetch_listings_from_db() -> list[dict]:
         total_area, floors, year_built, condition, ownership, plot_area,
         cadastral_nr, energy_class, additional_info, description
     FROM kv_listings
+    WHERE is_owner_direct = true
     ORDER BY last_seen_at DESC
     """
 
