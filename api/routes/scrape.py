@@ -49,7 +49,7 @@ def run_scrape(area: str):
         def _run_in_browser(page):
             """Everything runs inside one browser session."""
             # --- Phase 1: collect URLs + owner flags from search pages ---
-            search_base = build_search_url(area, owner_only=True)
+            search_base = build_search_url(area)
             # url -> is_owner_direct (from search page tag)
             all_listings: dict[str, bool] = {}
 

@@ -33,7 +33,7 @@ def scrape(area: str, output: str = "seed.json", max_pages: int = 50):
     Only owner-direct listings (tagged #Otse omanikult on search page)
     are crawled in detail.
     """
-    search_base = build_search_url(area, owner_only=True)
+    search_base = build_search_url(area)
 
     def run(page):
         # --- Phase 1: collect URLs + owner flags ---

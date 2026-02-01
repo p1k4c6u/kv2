@@ -17,23 +17,25 @@ COUNTY_TO_ID = {
 }
 
 
-def build_search_url(area: str, owner_only: bool = True) -> str:
+def build_search_url(area: str) -> str:
     """
-    area võib olla:
-      - city (nt "tallinn") => county + parish
-      - county (nt "harjumaa") => ainult county
+    Build kv.ee search URL for apartments (korterid) for sale in the given area.
 
-    owner_only: lisab &bid_objects=1 => ainult "otse omanikult" tulemused
+    area can be:
+      - city  (e.g. "tallinn") => county + parish filter
+      - county (e.g. "harjumaa") => county filter only
+
+    Owner-direct filtering is done client-side by checking for the
+    "#Otse omanikult" tag on each listing card — not via URL params.
     """
     area = area.lower().strip()
-    owner_param = "&bid_objects=1" if owner_only else ""
 
     # city
     if area in CITY_TO_FILTERS:
         f = CITY_TO_FILTERS[area]
         return (
             f"{BASE}/kinnisvara/korterid?"
-            f"act=search.simple&deal_type=1&county={f['county']}&parish={f['parish']}{owner_param}"
+            f"act=search.simple&deal_type=1&county={f['county']}&parish={f['parish']}"
         )
 
     # county
@@ -41,7 +43,7 @@ def build_search_url(area: str, owner_only: bool = True) -> str:
         county_id = COUNTY_TO_ID[area]
         return (
             f"{BASE}/kinnisvara/korterid?"
-            f"act=search.simple&deal_type=1&county={county_id}{owner_param}"
+            f"act=search.simple&deal_type=1&county={county_id}"
         )
 
     raise ValueError(
@@ -135,11 +137,9 @@ def extract_listings_with_owner(page) -> list[tuple[str, bool]]:
     return listings
 
 
-def get_listing_urls(
-    city: str, max_pages: int = 50, owner_only: bool = True
-) -> list[str]:
+def get_listing_urls(city: str, max_pages: int = 50) -> list[str]:
     city = city.lower().strip()
-    search_base = build_search_url(city, owner_only=owner_only)
+    search_base = build_search_url(city)
     all_urls = set()
 
     def run(page):
