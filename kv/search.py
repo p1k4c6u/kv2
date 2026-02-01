@@ -2,7 +2,7 @@
 import re
 import time
 from urllib.parse import urljoin
-from browser import with_browser
+from browser import with_browser, cf_goto
 
 BASE = "https://www.kv.ee"
 
@@ -81,66 +81,6 @@ def extract_listing_urls(page) -> set[str]:
     return urls
 
 
-def _cf_goto(page, url):
-    """
-    Navigate to a kv.ee URL and handle Cloudflare's managed challenge.
-
-    CF managed challenges work like this:
-      1. First request returns a 403 with a challenge page
-      2. The challenge page loads a script from challenges.cloudflare.com
-      3. That script runs browser fingerprinting and solves the challenge
-      4. On success, it POSTs back to kv.ee with a cf-clearance token
-      5. kv.ee sets the cf-clearance cookie and redirects to the original URL
-
-    We need to let all of that JS execute. The key: after the initial page
-    load, wait for a navigation event (the post-challenge redirect).
-    Once we have cf-clearance, subsequent requests in the same browser
-    context reuse it automatically.
-    """
-    # Navigate — CF will serve the challenge page
-    page.goto(url, wait_until="domcontentloaded", timeout=60000)
-    page.wait_for_timeout(2000)
-
-    title = page.evaluate("() => document.title")
-
-    if "just a moment" not in title.lower():
-        # No challenge — already on the real page (cf-clearance already valid)
-        return
-
-    print(f"  CF challenge detected, waiting for auto-solve...")
-
-    # The challenge JS will solve and trigger a form POST + redirect.
-    # Wait for the page to navigate away from the challenge page.
-    # CF managed challenges typically solve within 5-20s.
-    try:
-        with page.expect_navigation(timeout=60000, wait_until="domcontentloaded"):
-            # The navigation is triggered by the CF challenge JS automatically.
-            # We just need to wait. Adding a small poll to check if it happened.
-            pass
-    except Exception:
-        pass  # expect_navigation might already have fired
-
-    # If title still says "Just a moment", wait longer and poll
-    for _ in range(12):  # up to 60s more
-        page.wait_for_timeout(5000)
-        title = page.evaluate("() => document.title")
-        if "just a moment" not in title.lower():
-            print(f"  CF challenge solved, page title: {title}")
-            # Wait for content to fully render
-            page.wait_for_timeout(2000)
-            return
-        print(f"  still waiting for CF challenge... (title: {title})")
-
-    # Failed — dump info for diagnosis
-    html = page.content()
-    raise RuntimeError(
-        f"CF challenge did not resolve after ~60s.\n"
-        f"Current URL: {page.url}\n"
-        f"Title: {title}\n"
-        f"HTML snippet: {html[:3000]}"
-    )
-
-
 def get_listing_urls(
     city: str, max_pages: int = 50, owner_only: bool = True
 ) -> list[str]:
@@ -152,7 +92,7 @@ def get_listing_urls(
         # First request will hit CF challenge. Solve it once, then the
         # cf-clearance cookie persists for the rest of the session.
         first_url = search_base + "&page=1"
-        _cf_goto(page, first_url)
+        cf_goto(page, first_url)
 
         for page_no in range(1, max_pages + 1):
             if page_no > 1:
@@ -164,7 +104,7 @@ def get_listing_urls(
                 # If we hit CF again (cookie expired), solve again
                 title = page.evaluate("() => document.title")
                 if "just a moment" in title.lower():
-                    _cf_goto(page, url)
+                    cf_goto(page, url)
 
             body = page.inner_text("body")
 

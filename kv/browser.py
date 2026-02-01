@@ -79,3 +79,56 @@ def with_browser_headless(fn):
 def with_browser_visible(fn):
     """Convenience wrapper that forces visible browser mode."""
     return with_browser(fn, headless=False)
+
+
+def cf_goto(page, url):
+    """
+    Navigate to a kv.ee URL and handle Cloudflare's managed challenge.
+
+    CF managed challenges work like this:
+      1. First request returns a 403 with a challenge page
+      2. The challenge page loads a script from challenges.cloudflare.com
+      3. That script runs browser fingerprinting and solves the challenge
+      4. On success, it POSTs back to kv.ee with a cf-clearance token
+      5. kv.ee sets the cf-clearance cookie and redirects to the original URL
+
+    Once cf-clearance is set, subsequent requests in the same browser
+    context reuse it automatically — no need to re-solve.
+    """
+    page.goto(url, wait_until="domcontentloaded", timeout=60000)
+    page.wait_for_timeout(2000)
+
+    title = page.evaluate("() => document.title")
+
+    if "just a moment" not in title.lower():
+        # No challenge — already on the real page
+        return
+
+    print(f"  CF challenge detected, waiting for auto-solve...")
+
+    # The challenge JS will solve and trigger a form POST + redirect.
+    # Wait for the page to navigate away from the challenge page.
+    try:
+        with page.expect_navigation(timeout=60000, wait_until="domcontentloaded"):
+            pass
+    except Exception:
+        pass  # expect_navigation might already have fired
+
+    # Poll until title changes (CF managed challenges typically solve in 5-20s)
+    for _ in range(12):  # up to 60s
+        page.wait_for_timeout(5000)
+        title = page.evaluate("() => document.title")
+        if "just a moment" not in title.lower():
+            print(f"  CF challenge solved, page title: {title}")
+            page.wait_for_timeout(2000)
+            return
+        print(f"  still waiting for CF challenge... (title: {title})")
+
+    # Failed — dump info for diagnosis
+    html = page.content()
+    raise RuntimeError(
+        f"CF challenge did not resolve after ~60s.\n"
+        f"Current URL: {page.url}\n"
+        f"Title: {title}\n"
+        f"HTML snippet: {html[:3000]}"
+    )

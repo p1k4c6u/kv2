@@ -2,7 +2,7 @@
 
 import re
 from bs4 import BeautifulSoup
-from browser import with_browser
+from browser import with_browser, cf_goto
 
 
 def normalize_spaces(s: str) -> str:
@@ -118,17 +118,33 @@ def parse_listing(html: str) -> dict:
     return data
 
 
-def crawl_kv_listing(url: str) -> dict:
-    def run(page):
-        page.goto(url, wait_until="domcontentloaded")
-        body = page.inner_text("body")
-        if "Turvakontroll" in body:
-            input("Lahenda turvakontroll ja vajuta Enter...")
+def crawl_kv_listing(url: str, page=None) -> dict:
+    """
+    Scrape a single listing page.
 
-        html = page.content()
+    Args:
+        url: The listing URL on kv.ee
+        page: An existing Playwright page (shared browser session with cf-clearance).
+              If None, opens a new browser — useful for one-off scraping.
+    """
+
+    def _scrape(p):
+        cf_goto(p, url)
+
+        body = p.inner_text("body")
+        if "Turvakontroll" in body:
+            raise RuntimeError(f"Captcha on listing page {url}. Body: {body[:500]}")
+
+        html = p.content()
         data = parse_listing(html)
         data["url"] = url
         data["listing_id"] = extract_listing_id(url)
         return data
 
-    return with_browser(run)
+    if page is not None:
+        # Shared session — cf-clearance cookie already set, cf_goto will
+        # skip the challenge automatically.
+        return _scrape(page)
+    else:
+        # Standalone — opens its own browser, will need to solve CF fresh.
+        return with_browser(_scrape)
