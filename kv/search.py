@@ -49,36 +49,90 @@ def build_search_url(area: str, owner_only: bool = True) -> str:
     )
 
 
+def _is_listing_href(h: str) -> bool:
+    """Check if an href looks like a kv.ee listing URL."""
+    if not h or not h.startswith("/"):
+        return False
+    if "/object/images/" in h:
+        return False
+    clean = h.split("?")[0]
+    return bool(re.search(r"-\d+\.html$", clean) or "/object/" in clean)
+
+
 def extract_listing_urls(page) -> set[str]:
     """
-    Extract listing URLs from a search results page using Playwright.
-
-    Handles both URL formats:
-    - Old: /object/3825677
-    - New: /something-something-3825677.html
+    Extract listing URLs from a search results page.
+    Returns only URLs (legacy interface, used by get_listing_urls).
     """
-    hrefs = page.eval_on_selector_all(
-        "a[href]", "els => els.map(e => e.getAttribute('href'))"
-    )
+    return {url for url, _ in extract_listings_with_owner(page)}
 
-    urls = set()
-    for h in hrefs:
-        if not h:
-            continue
-        if h.startswith("/"):
-            u = urljoin(BASE, h.split("?")[0])
-        else:
-            continue
 
-        if "/object/images/" in u:
-            continue
+def extract_listings_with_owner(page) -> list[tuple[str, bool]]:
+    """
+    Extract listing URLs + owner-direct flag from a search results page.
 
-        if re.search(r"-\d+\.html$", u):
-            urls.add(u)
-        elif "/object/" in u:
-            urls.add(u)
+    kv.ee marks owner-direct listings with a "#Otse omanikult" tag inside
+    each listing card on the search results page. We walk each card's DOM
+    to associate the tag with its listing URL.
 
-    return urls
+    Returns list of (absolute_url, is_owner_direct) tuples.
+    """
+    # Run JS in-page: for every <a> that looks like a listing link,
+    # walk up to find the nearest listing card ancestor, then check if
+    # that card contains the "otse omanikult" text anywhere.
+    # kv.ee listing cards are typically .object-card, .list-item, or
+    # similar containers. We use a generic approach: find the closest
+    # ancestor that is a direct child of the results list, or fall back
+    # to checking the whole page text if no clear card boundary exists.
+    js = """
+    () => {
+        const results = [];
+        const anchors = document.querySelectorAll('a[href]');
+        const seen = new Set();
+
+        for (const a of anchors) {
+            const href = a.getAttribute('href');
+            if (!href || !href.startsWith('/')) continue;
+            const clean = href.split('?')[0];
+            // Match listing hrefs: /object/12345 or /something-12345.html
+            if (!/(-\\d+\\.html$|\\/object\\/\\d)/.test(clean)) continue;
+            if (clean.includes('/object/images/')) continue;
+            if (seen.has(clean)) continue;
+            seen.add(clean);
+
+            // Walk up to find the listing card container.
+            // Try known card classes first, then fall back to a generic
+            // "large enough ancestor" heuristic.
+            let card = null;
+            let el = a;
+            for (let i = 0; i < 10; i++) {
+                el = el.parentElement;
+                if (!el) break;
+                const cls = (el.className || '').toLowerCase();
+                if (cls.includes('object') || cls.includes('card') ||
+                    cls.includes('list-item') || cls.includes('listing')) {
+                    card = el;
+                    break;
+                }
+            }
+            // Fallback: use the <a> itself (narrow scope but safe)
+            if (!card) card = a;
+
+            const text = card.innerText.toLowerCase();
+            const isOwner = text.includes('otse omanikult');
+            results.push({ href: clean, isOwner });
+        }
+        return results;
+    }
+    """
+    raw = page.evaluate(js)
+
+    listings = []
+    for item in raw:
+        url = urljoin(BASE, item["href"])
+        listings.append((url, item["isOwner"]))
+
+    return listings
 
 
 def get_listing_urls(

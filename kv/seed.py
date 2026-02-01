@@ -21,7 +21,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from browser import with_browser_visible, cf_goto
-from search import build_search_url, extract_listing_urls
+from search import build_search_url, extract_listings_with_owner
 from listings import crawl_kv_listing
 
 
@@ -29,18 +29,23 @@ def scrape(area: str, output: str = "seed.json", max_pages: int = 50):
     """
     Scrape listing URLs + full listing data using a visible browser.
     The user must solve the CF challenge manually the first time.
+
+    Only owner-direct listings (tagged #Otse omanikult on search page)
+    are crawled in detail.
     """
     search_base = build_search_url(area, owner_only=True)
 
     def run(page):
-        # --- Phase 1: collect URLs ---
-        all_urls = set()
+        # --- Phase 1: collect URLs + owner flags ---
+        # url -> is_owner_direct
+        all_listings: dict[str, bool] = {}
+
         for page_no in range(1, max_pages + 1):
             url = search_base + f"&page={page_no}"
 
             if page_no == 1:
-                print(f"Opening search page. If you see a Cloudflare challenge,")
-                print(f"solve it manually in the browser, then press Enter here.")
+                print("Opening search page. If you see a Cloudflare challenge,")
+                print("solve it manually in the browser, then press Enter here.")
                 page.goto(url, wait_until="domcontentloaded", timeout=120000)
                 page.wait_for_timeout(3000)
 
@@ -49,48 +54,51 @@ def scrape(area: str, output: str = "seed.json", max_pages: int = 50):
                     input(
                         "\n>>> Solve the CF challenge in the browser, then press Enter...\n"
                     )
-                    # Wait for page to load after manual solve
                     page.wait_for_timeout(3000)
             else:
                 page.goto(url, wait_until="domcontentloaded", timeout=30000)
                 page.wait_for_timeout(2000)
 
-                # If CF pops up again (unlikely after first solve in same session)
                 title = page.evaluate("() => document.title")
                 if "just a moment" in title.lower():
                     input("\n>>> CF challenge again. Solve it and press Enter...\n")
                     page.wait_for_timeout(3000)
 
-            batch = extract_listing_urls(page)
-            new = batch - all_urls
-            print(
-                f"  page {page_no}: +{len(new)} URLs (total {len(all_urls) + len(new)})"
-            )
+            batch = extract_listings_with_owner(page)
+            new_count = sum(1 for u, _ in batch if u not in all_listings)
+            for listing_url, is_owner in batch:
+                all_listings.setdefault(listing_url, is_owner)
 
-            if not new:
+            print(f"  page {page_no}: +{new_count} (total {len(all_listings)})")
+
+            if new_count == 0:
                 if page_no == 1:
                     body = page.inner_text("body")
                     print(f"WARNING: Zero URLs on page 1. Body snippet:\n{body[:500]}")
                 break
 
-            all_urls.update(batch)
             time.sleep(1)
 
-        urls = sorted(all_urls)
-        print(f"\nTotal URLs: {len(urls)}")
+        owner_urls = sorted(u for u, owner in all_listings.items() if owner)
+        print(
+            f"\nTotal: {len(all_listings)} listings, "
+            f"{len(owner_urls)} tagged as owner-direct"
+        )
 
-        # --- Phase 2: scrape each listing ---
+        # --- Phase 2: crawl only owner-direct listings ---
         listings = []
-        for i, listing_url in enumerate(urls):
+        for i, listing_url in enumerate(owner_urls):
             try:
                 data = crawl_kv_listing(listing_url, page=page)
+                # Authoritative flag from search page
+                data["is_owner_direct"] = True
                 listings.append(data)
-                owner = "OWNER" if data.get("is_owner_direct") else "agent"
                 print(
-                    f"  [{i + 1}/{len(urls)}] {data.get('listing_id'):>10} | {owner} | {data.get('title', 'no title')[:60]}"
+                    f"  [{i + 1}/{len(owner_urls)}] {data.get('listing_id', ''):>10} | "
+                    f"{data.get('title', 'no title')[:60]}"
                 )
             except Exception as e:
-                print(f"  [{i + 1}/{len(urls)}] ERROR: {e}")
+                print(f"  [{i + 1}/{len(owner_urls)}] ERROR: {e}")
                 continue
             time.sleep(0.5)
 
@@ -102,8 +110,7 @@ def scrape(area: str, output: str = "seed.json", max_pages: int = 50):
     with open(output, "w", encoding="utf-8") as f:
         json.dump(listings, f, ensure_ascii=False, indent=2)
 
-    owner_count = sum(1 for l in listings if l.get("is_owner_direct"))
-    print(f"\nSaved {len(listings)} listings ({owner_count} owner-direct) to {output}")
+    print(f"\nSaved {len(listings)} owner-direct listings to {output}")
 
 
 def load(json_path: str, db_url: str):

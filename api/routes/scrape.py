@@ -40,17 +40,18 @@ def run_scrape(area: str):
         os.environ.setdefault("HEADLESS", "true")  # Force headless mode for API
 
         from db import init_db, save_listing
-        from search import build_search_url, extract_listing_urls
-        from listings import crawl_kv_listing, parse_listing, extract_listing_id
+        from search import build_search_url, extract_listings_with_owner
+        from listings import crawl_kv_listing
         from browser import with_browser, cf_goto
 
         init_db()
 
         def _run_in_browser(page):
             """Everything runs inside one browser session."""
-            # --- Phase 1: collect listing URLs from search pages ---
+            # --- Phase 1: collect URLs + owner flags from search pages ---
             search_base = build_search_url(area, owner_only=True)
-            all_urls = set()
+            # url -> is_owner_direct (from search page tag)
+            all_listings: dict[str, bool] = {}
 
             for page_no in range(1, 51):  # max 50 pages
                 url = search_base + f"&page={page_no}"
@@ -65,13 +66,16 @@ def run_scrape(area: str):
                     if "just a moment" in title.lower():
                         cf_goto(page, url)
 
-                batch = extract_listing_urls(page)
-                new = batch - all_urls
+                batch = extract_listings_with_owner(page)
+                new_count = sum(1 for url, _ in batch if url not in all_listings)
+                for listing_url, is_owner in batch:
+                    all_listings.setdefault(listing_url, is_owner)
+
                 print(
-                    f"search page {page_no}: +{len(new)} (total {len(all_urls) + len(new)})"
+                    f"search page {page_no}: +{new_count} (total {len(all_listings)})"
                 )
 
-                if not new:
+                if new_count == 0:
                     if page_no == 1:
                         body = page.inner_text("body")
                         raise RuntimeError(
@@ -79,29 +83,43 @@ def run_scrape(area: str):
                         )
                     break
 
-                all_urls.update(batch)
                 time.sleep(1)
 
-            urls = sorted(all_urls)
-            print(f"Total URLs found: {len(urls)}")
+            owner_urls = {u for u, owner in all_listings.items() if owner}
+            print(
+                f"Total: {len(all_listings)} listings, "
+                f"{len(owner_urls)} tagged as owner-direct on search page"
+            )
 
             # --- Phase 2: scrape each listing (same session, CF cookie persists) ---
+            # Only crawl owner-direct listings — skip the rest.
+            urls_to_crawl = sorted(owner_urls)
             saved = 0
             errors = []
-            for i, listing_url in enumerate(urls):
+            for i, listing_url in enumerate(urls_to_crawl):
                 try:
                     data = crawl_kv_listing(listing_url, page=page)
+                    # Force the flag from search page (authoritative source);
+                    # listing page detection is a fallback/confirmation.
+                    data["is_owner_direct"] = True
                     save_listing(data)
                     saved += 1
-                    print(f"  [{i + 1}/{len(urls)}] saved {data.get('listing_id')}")
+                    print(
+                        f"  [{i + 1}/{len(urls_to_crawl)}] saved {data.get('listing_id')}"
+                    )
                 except Exception as e:
                     errors.append({"url": listing_url, "error": str(e)})
-                    print(f"  [{i + 1}/{len(urls)}] error: {e}")
+                    print(f"  [{i + 1}/{len(urls_to_crawl)}] error: {e}")
                     continue
 
                 time.sleep(0.5)  # be polite
 
-            return {"urls_found": len(urls), "saved": saved, "errors": errors[:10]}
+            return {
+                "urls_found": len(all_listings),
+                "owner_tagged": len(owner_urls),
+                "saved": saved,
+                "errors": errors[:10],
+            }
 
         result = with_browser(_run_in_browser)
 
