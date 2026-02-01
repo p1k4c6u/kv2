@@ -40,7 +40,7 @@ def run_scrape(area: str):
         os.environ.setdefault("HEADLESS", "true")  # Force headless mode for API
 
         from db import init_db, save_listing
-        from search import build_search_url, extract_listings_with_owner
+        from search import build_search_url, extract_listings_with_owner, paginated_url
         from listings import crawl_kv_listing
         from browser import with_browser, cf_goto
 
@@ -54,7 +54,7 @@ def run_scrape(area: str):
             all_listings: dict[str, bool] = {}
 
             for page_no in range(1, 51):  # max 50 pages
-                url = search_base + f"&page={page_no}"
+                url = paginated_url(search_base, page_no)
 
                 if page_no == 1:
                     cf_goto(page, url)  # solve CF once

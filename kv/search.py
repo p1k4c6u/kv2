@@ -137,6 +137,24 @@ def extract_listings_with_owner(page) -> list[tuple[str, bool]]:
     return listings
 
 
+PAGE_SIZE = 50  # kv.ee returns 50 listings per page
+
+
+def paginated_url(search_base: str, page_no: int) -> str:
+    """
+    kv.ee pagination uses &start=N (offset), not &page=N.
+    Page param is always 1; &start advances by PAGE_SIZE.
+
+        page 1: ...&page=1
+        page 2: ...&page=1&start=50
+        page 3: ...&page=1&start=100
+    """
+    url = search_base + "&page=1"
+    if page_no > 1:
+        url += f"&start={(page_no - 1) * PAGE_SIZE}"
+    return url
+
+
 def get_listing_urls(city: str, max_pages: int = 50) -> list[str]:
     city = city.lower().strip()
     search_base = build_search_url(city)
@@ -145,13 +163,11 @@ def get_listing_urls(city: str, max_pages: int = 50) -> list[str]:
     def run(page):
         # First request will hit CF challenge. Solve it once, then the
         # cf-clearance cookie persists for the rest of the session.
-        first_url = search_base + "&page=1"
-        cf_goto(page, first_url)
+        cf_goto(page, paginated_url(search_base, 1))
 
         for page_no in range(1, max_pages + 1):
             if page_no > 1:
-                url = search_base + f"&page={page_no}"
-                # After CF is solved, subsequent navigations should work directly
+                url = paginated_url(search_base, page_no)
                 page.goto(url, wait_until="domcontentloaded", timeout=30000)
                 page.wait_for_timeout(2000)
 
@@ -173,8 +189,7 @@ def get_listing_urls(city: str, max_pages: int = 50) -> list[str]:
             if not new:
                 if page_no == 1:
                     raise RuntimeError(
-                        f"Zero listing URLs on page 1. URL: {search_base}&page=1\n"
-                        f"Body: {body[:1000]}"
+                        f"Zero listing URLs on page 1.\nBody: {body[:1000]}"
                     )
                 break
 

@@ -21,7 +21,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from browser import with_browser_visible, cf_goto
-from search import build_search_url, extract_listings_with_owner
+from search import build_search_url, extract_listings_with_owner, paginated_url
 from listings import crawl_kv_listing
 
 
@@ -41,7 +41,7 @@ def scrape(area: str, output: str = "seed.json", max_pages: int = 50):
         all_listings: dict[str, bool] = {}
 
         for page_no in range(1, max_pages + 1):
-            url = search_base + f"&page={page_no}"
+            url = paginated_url(search_base, page_no)
 
             if page_no == 1:
                 print("Opening search page. If you see a Cloudflare challenge,")
