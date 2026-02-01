@@ -10,7 +10,10 @@ RUN playwright install-deps chromium && playwright install chromium
 
 COPY . .
 
+# start.sh resolves PORT at runtime inside a real shell
+RUN printf '#!/bin/sh\nexec uvicorn api.main:app --host 0.0.0.0 --port "${PORT:-8000}"\n' > /app/start.sh && chmod +x /app/start.sh
+
 ENV PORT=8000
 EXPOSE 8000
 
-CMD uvicorn api.main:app --host 0.0.0.0 --port ${PORT:-8000}
+CMD ["/app/start.sh"]

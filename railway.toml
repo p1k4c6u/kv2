@@ -1,4 +1,5 @@
 [deploy]
+startCommand = "/app/start.sh"
 healthcheckPath = "/api/health"
 healthcheckTimeout = 100
 restartPolicyType = "on_failure"
