@@ -51,16 +51,6 @@ def build_search_url(area: str) -> str:
     )
 
 
-def _is_listing_href(h: str) -> bool:
-    """Check if an href looks like a kv.ee listing URL."""
-    if not h or not h.startswith("/"):
-        return False
-    if "/object/images/" in h:
-        return False
-    clean = h.split("?")[0]
-    return bool(re.search(r"-\d+\.html$", clean) or "/object/" in clean)
-
-
 def extract_listing_urls(page) -> set[str]:
     """
     Extract listing URLs from a search results page.
@@ -73,54 +63,32 @@ def extract_listings_with_owner(page) -> list[tuple[str, bool]]:
     """
     Extract listing URLs + owner-direct flag from a search results page.
 
-    kv.ee marks owner-direct listings with a "#Otse omanikult" tag inside
-    each listing card on the search results page. We walk each card's DOM
-    to associate the tag with its listing URL.
+    Each listing on kv.ee is an <article> element. Owner-direct listings
+    contain the text "Otse omanikult" somewhere inside the card.
+    We read the listing URL from the article's data-object-url attribute
+    (or fall back to the first matching <a> inside it).
 
     Returns list of (absolute_url, is_owner_direct) tuples.
     """
-    # Run JS in-page: for every <a> that looks like a listing link,
-    # walk up to find the nearest listing card ancestor, then check if
-    # that card contains the "otse omanikult" text anywhere.
-    # kv.ee listing cards are typically .object-card, .list-item, or
-    # similar containers. We use a generic approach: find the closest
-    # ancestor that is a direct child of the results list, or fall back
-    # to checking the whole page text if no clear card boundary exists.
     js = """
     () => {
         const results = [];
-        const anchors = document.querySelectorAll('a[href]');
-        const seen = new Set();
+        const articles = document.querySelectorAll('article[data-object-id]');
 
-        for (const a of anchors) {
-            const href = a.getAttribute('href');
-            if (!href || !href.startsWith('/')) continue;
-            const clean = href.split('?')[0];
-            // Match listing hrefs: /object/12345 or /something-12345.html
-            if (!/(-\\d+\\.html$|\\/object\\/\\d)/.test(clean)) continue;
-            if (clean.includes('/object/images/')) continue;
-            if (seen.has(clean)) continue;
-            seen.add(clean);
-
-            // Walk up to find the listing card container.
-            // Try known card classes first, then fall back to a generic
-            // "large enough ancestor" heuristic.
-            let card = null;
-            let el = a;
-            for (let i = 0; i < 10; i++) {
-                el = el.parentElement;
-                if (!el) break;
-                const cls = (el.className || '').toLowerCase();
-                if (cls.includes('object') || cls.includes('card') ||
-                    cls.includes('list-item') || cls.includes('listing')) {
-                    card = el;
-                    break;
-                }
+        for (const art of articles) {
+            // Prefer data-object-url attribute (always present, clean)
+            let href = art.getAttribute('data-object-url');
+            if (!href) {
+                // Fallback: first <a> with a listing-like href
+                const a = art.querySelector('a[href$=".html"], a[href*="/object/"]');
+                if (a) href = a.getAttribute('href');
             }
-            // Fallback: use the <a> itself (narrow scope but safe)
-            if (!card) card = a;
+            if (!href) continue;
 
-            const text = card.innerText.toLowerCase();
+            const clean = href.split('?')[0];
+            if (clean.includes('/object/images/')) continue;
+
+            const text = art.innerText.toLowerCase();
             const isOwner = text.includes('otse omanikult');
             results.push({ href: clean, isOwner });
         }
