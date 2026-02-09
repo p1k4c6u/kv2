@@ -1,8 +1,10 @@
 # search.py
+
 import re
 import time
 from urllib.parse import urljoin
 from .browser import with_browser
+from . import ui
 
 BASE = "https://www.kv.ee"
 
@@ -76,12 +78,12 @@ def get_listing_urls(city: str, max_pages: int = 50) -> list[str]:
 
             body = page.inner_text("body")
             if "Turvakontroll" in body:
-                input("Lahenda turvakontroll ja vajuta Enter...")
+                ui.show_captcha_warning()
 
             batch = extract_listing_urls(page)
             new = batch - all_urls
 
-            print(f"page {page_no}: +{len(new)} (total {len(all_urls)+len(new)})")
+            ui.show_page_progress(page_no, len(new), len(all_urls) + len(new))
 
             if not new:
                 break

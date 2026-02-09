@@ -3,6 +3,7 @@
 import re
 from bs4 import BeautifulSoup
 from .browser import with_browser
+from . import ui
 
 def normalize_spaces(s: str) -> str:
     return re.sub(r"\s+", " ", s).strip()
@@ -102,7 +103,7 @@ def crawl_kv_listing(url: str) -> dict:
         page.goto(url, wait_until="domcontentloaded")
         body = page.inner_text("body")
         if "Turvakontroll" in body:
-            input("Lahenda turvakontroll ja vajuta Enter...")
+            ui.show_captcha_warning()
 
         html = page.content()
         data = parse_listing(html)
